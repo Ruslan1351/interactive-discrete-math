@@ -19,7 +19,7 @@ export const GraphTheoryViewer = () => {
   const [rusTheoryFromSect, setRusTheoryFromSect] = useState([]);
   const [engTheoryFromSect, setEngTheoryFromSect] = useState([]);
   const [rusVideoFromSect, setRusVideoFromSect] = useState([]);
-  const [topicsArray, setTopicsArray] = useState<any[]>([]);
+  const [topicsArray, setTopicsArray] = useState<ScAddr[]>([]);
   const [userAddr, setUserAddr] = useState<ScAddr | null>(null);
   const [setOfCompletedSectionsAddr, setSetOfCompletedSectionsAddr] = useState<ScAddr | null>(null);
   
@@ -39,7 +39,7 @@ export const GraphTheoryViewer = () => {
     const res = await client.generateElements(construction);
     const actionAddr = res[actionAlias];
     const initiateActionConstruction = new ScConstruction();
-    const { actionInitiated } = client.searchKeynodes("action_initiated");
+    const { actionInitiated } = await client.searchKeynodes("action_initiated");
     initiateActionConstruction.generateConnector(
       ScType.ConstPermPosArc,
       actionInitiated,
@@ -49,6 +49,21 @@ export const GraphTheoryViewer = () => {
     return await helper.getResult();
   }
   
+  async function isSectionInSet(set: ScAddr, section: ScAddr) {
+    const templ = new ScTemplate;
+    templ.triple(
+      set,
+      ScType.VarPermPosArc,
+      [ScType.VarNode, "_section"]
+    );
+    const res = await client.searchByTemplate(templ);
+    for (let i = 0; i < res.length; i++) {
+      if (res[i].get("_section") == section)
+        return true;
+    }
+    return false;
+  }
+
   async function fetchSection() {
     console.log('start section fetching...');
     const { sectionSubjectDomainOfNGraph } = await client.searchKeynodes("section_subject_domain_of_n_graph");
@@ -246,8 +261,22 @@ export const GraphTheoryViewer = () => {
       setRusVideoFromSect(rusVideoFromSectTemp);
       setTopicsArray(sectionsArray)
       const login = localStorage.getItem("username");
-      const userAddrTemp = await client.searchLinksByContents([`user_${login}`]);
+      const userAddrTemp = (await client.searchLinksByContents([`user_${login}`]))[0][0];
       setUserAddr(userAddrTemp);
+      
+      const { nrelCompletedSections } = await client.searchKeynodes("nrel_completed_sections");
+      const templ = new ScTemplate;
+      templ.quintuple(
+        userAddr,
+        ScType.VarCommonArc,
+        [ScType.VarNodeTuple ,"_set_of_completed_sections"],
+        ScType.VarPermPosArc,
+        nrelCompletedSections
+        );
+      const res = await client.searchByTemplate(templ);
+      if (res.length) {
+        setSetOfCompletedSectionsAddr(res[0].get("_set_of_completed_sections"))
+      }
       
       console.log('section names', sectionNamesTemp);
       console.log('theory loaded success', rusTheoryFromSectTemp);
@@ -551,6 +580,17 @@ export const GraphTheoryViewer = () => {
   // Рендер экрана выбора тем
   const renderTopicSelection = () => {
     if (!currentSection) return goToSections();
+    
+    /*useEffect(() => {
+    const fetchData = async () => {
+      for (let i = 0; i < currentSection.topics.length; i++) {
+        if (await isSectionInSet(setOfCompletedSectionsAddr, currentSection.topics[i].addr) == false) {
+
+        }
+    }
+    };
+    fetchData();
+  }, []); */
 
     return (
       <div class="flex flex-col h-full p-5">
@@ -581,28 +621,80 @@ export const GraphTheoryViewer = () => {
     );
   };
 
+
   // Рендер экрана с контентом
   const renderContent = () => {
-    const [actionClassAddr, setActionClassAddr] = useState<ScAddr | null>(null);
-
     if (!currentSection || !currentTopic) return goToSections();
     
-    useEffect(() => {
+    /*useEffect(() => {
     const fetchData = async () => {
       try {
         const {actionAddSectionToSet} = await client.searchKeynodes("action_add_section_to_set")
-        setActionClassAddr(actionAddSectionToSet)
+        console.log("Action Add Section To Set: ", actionAddSectionToSet)
         const actionParams = [userAddr, currentTopic.addr];
-        const result = await initiateActionAndGetResult(actionClassAddr, actionParams);
-        
+        console.log("User Addr: ", userAddr);
+        console.log("Current Topic Addr: ", currentTopic.addr)
+        const result = await initiateActionAndGetResult(actionAddSectionToSet, actionParams);
+        console.log("result: ", result);
+        const setOfCompletedSectionsAlias = "_set_of_completed_sections";
+        const templ = new ScTemplate;
+        templ.quintuple(
+          [ScType.VarNodeTuple, setOfCompletedSectionsAlias],
+          ScType.VarPermPosArc,
+          currentTopic.addr,
+          ScType.VarPermPosArc,
+          result
+          );
+        const res = await client.searchByTemplate(templ);
+        if (res.length) {
+          setSetOfCompletedSectionsAddr(res[0].get(setOfCompletedSectionsAlias));
+        }
       } catch (error) {
         console.error("Error fetching data:", error);
-      }   
+      }        
+    };
+    fetchData();
+  }, []); */
 
+    console.log("SET: ", setOfCompletedSectionsAddr);
+    useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const { nrelCompletedSections } = await client.searchKeynodes("nrel_completed_sections");
+        const templ = new ScTemplate;
+        templ.quintuple(
+          userAddr,
+          ScType.VarCommonArc,
+          [ScType.VarNodeTuple ,"_set_of_completed_sections"],
+          ScType.VarPermPosArc,
+          nrelCompletedSections
+          );
+        const res = await client.searchByTemplate(templ);
+        if (res.length) { //множество есть
+          setSetOfCompletedSectionsAddr(res[0].get("_set_of_completed_sections"));
+        }
+        else {  //множества нет
+          const construction = new ScConstruction;
+          const tupleAlias = "_set";
+          const arcAlias = "_arc";
+          construction.generateNode(ScType.ConstNodeTuple, tupleAlias)
+          construction.generateConnector(ScType.ConstCommonArc, userAddr, tupleAlias, arcAlias);
+          construction.generateConnector(ScType.ConstPermPosArc, nrelCompletedSections, arcAlias);
+          const result = await client.generateElements(construction);
+          setSetOfCompletedSectionsAddr(result[tupleAlias]);
+        }
+        if (await isSectionInSet(setOfCompletedSectionsAddr, currentTopic.addr) == false) {
+          const construction = new ScConstruction;
+          construction.generateConnector(ScType.ConstPermPosArc, setOfCompletedSectionsAddr, currentTopic.addr);
+          const result = await client.generateElements(construction);
+        }
+      } catch (error) {
+        console.error("Error fetching data:", error);
+      }        
     };
     fetchData();
   }, []); 
-
+    console.log("SET: ", setOfCompletedSectionsAddr);
     return (
       <div class="flex flex-col h-full">
         {/* Панель навигации */}
